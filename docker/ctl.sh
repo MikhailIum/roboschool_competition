@@ -13,11 +13,33 @@ Usage:
   docker/ctl.sh up      # build then start the competition container with visualization
   docker/ctl.sh down    # stop and remove the competition container
   docker/ctl.sh exec    # open a shell inside the running container
-  docker/ctl.sh ros2-build  # build the ROS 2 Jazzy layer (desktop-full + rviz2 + tools)
+  docker/ctl.sh ros2-build  # build the ROS 2 Jazzy layer (desktop-full + rqt + tools)
   docker/ctl.sh ros2-up     # start ROS 2 Jazzy container with X11 support
   docker/ctl.sh ros2-down   # stop and remove ROS 2 Jazzy container
   docker/ctl.sh ros2-exec   # open a shell inside the ROS 2 Jazzy container
 EOF
+}
+
+retry_command() {
+  local max_attempts="$1"
+  shift
+
+  local attempt=1
+  while true; do
+    if "$@"; then
+      return 0
+    fi
+
+    if (( attempt >= max_attempts )); then
+      echo "Command failed after ${attempt} attempts: $*" >&2
+      return 1
+    fi
+
+    echo "Command failed (attempt ${attempt}/${max_attempts}): $*" >&2
+    echo "Retrying in 5 seconds..." >&2
+    attempt=$((attempt + 1))
+    sleep 5
+  done
 }
 
 build_layers() {
@@ -53,7 +75,7 @@ cmd="${1:-}"
 case "${cmd}" in
   build)
     build_layers
-    compose build
+    retry_command 3 compose build
     ;;
   up)
     build_layers
@@ -68,7 +90,7 @@ case "${cmd}" in
     compose exec aliengo-competition bash
     ;;
   ros2-build)
-    compose_ros2 build
+    retry_command 3 compose_ros2 build
     ;;
   ros2-up)
     ensure_x11_access

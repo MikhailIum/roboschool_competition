@@ -3,21 +3,20 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-RVIZ_CONFIG="/workspace/aliengo_competition/ros2_isaac_bridge/e2e_check/camera_topics.rviz"
-OPEN_RVIZ=1
+OPEN_RQT_GRAPH=1
 DO_BUILD=1
 
 for arg in "$@"; do
   case "${arg}" in
-    --no-rviz)
-      OPEN_RVIZ=0
+    --no-rqt-graph)
+      OPEN_RQT_GRAPH=0
       ;;
     --skip-build)
       DO_BUILD=0
       ;;
     *)
       echo "Unknown argument: ${arg}"
-      echo "Usage: run_everything.sh [--skip-build] [--no-rviz]"
+      echo "Usage: run_everything.sh [--skip-build] [--no-rqt-graph]"
       exit 1
       ;;
   esac
@@ -92,10 +91,10 @@ if ! ros_compose exec -T ros2-jazzy bash -lc \
   exit 1
 fi
 
-if [[ "${OPEN_RVIZ}" -eq 1 ]]; then
-  echo "[E2E] 7/7 Camera topics are alive. Opening RViz..."
+if [[ "${OPEN_RQT_GRAPH}" -eq 1 ]]; then
+  echo "[E2E] 7/7 Camera topics are alive. Opening rqt_graph..."
   ros_compose exec ros2-jazzy bash -lc \
-    "set -e; set +u; source /opt/ros/jazzy/setup.bash; set -u; rviz2 -d '${RVIZ_CONFIG}'"
+    "set -e; set +u; source /opt/ros/jazzy/setup.bash; set -u; rqt_graph"
 else
-  echo "[E2E] 7/7 Camera topics are alive. RViz skipped (--no-rviz)."
+  echo "[E2E] 7/7 Camera topics are alive. rqt_graph skipped (--no-rqt-graph)."
 fi

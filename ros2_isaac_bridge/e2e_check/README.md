@@ -1,11 +1,11 @@
-# E2E Проверка (Sim + ROS2 + RViz)
+# E2E Проверка (Sim + ROS2 + rqt_graph)
 
 Папка для полной проверки, что связка работает целиком:
 - контейнер симуляции,
 - контейнер ROS 2 Jazzy,
 - sim-side контроллер,
 - ROS bridge,
-- камера в топиках и отображение в `rviz2`.
+- камера в топиках и граф ROS-связей в `rqt_graph`.
 
 ## Полный запуск
 
@@ -23,16 +23,16 @@ bash ros2_isaac_bridge/e2e_check/run_everything.sh
 5. проверяет, что приходят:
    - `/aliengo/camera/color/image_raw`
    - `/aliengo/camera/depth/image_raw`
-6. открывает `rviz2` с профилем `camera_topics.rviz`.
+6. открывает `rqt_graph`, чтобы посмотреть все топики и связи между нодами.
 
 Опции:
 - `--skip-build` пропускает сборку образов и просто поднимает контейнеры.
-- `--no-rviz` не открывает GUI, только проверяет, что камеры реально публикуются.
+- `--no-rqt-graph` не открывает GUI, только проверяет, что камеры реально публикуются.
 
 Пример smoke-check без GUI:
 
 ```bash
-bash ros2_isaac_bridge/e2e_check/run_everything.sh --skip-build --no-rviz
+bash ros2_isaac_bridge/e2e_check/run_everything.sh --skip-build --no-rqt-graph
 ```
 
 На первом старте симулятора проверка может идти дольше (собирается `gymtorch`).
@@ -47,5 +47,5 @@ bash ros2_isaac_bridge/e2e_check/stop_everything.sh
 
 ## Полезно
 
-Если `rviz2` не открывается, обычно проблема в X11/`DISPLAY`.
+Если `rqt_graph` не открывается, обычно проблема в X11/`DISPLAY`.
 В этом проекте доступ уже настраивается через `docker/ctl.sh` (`xhost` + проброс X11).

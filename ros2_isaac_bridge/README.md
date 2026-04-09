@@ -10,7 +10,7 @@ docker/ctl.sh exec
 python ros2_isaac_bridge/sim_side/isaac_controller.py
 ```
 
-## 2) Поднять ROS 2 Jazzy (rviz2/rqt/bridge)
+## 2) Поднять ROS 2 Jazzy (rqt/bridge)
 
 ```bash
 docker/ctl.sh ros2-build
@@ -27,7 +27,7 @@ bash /workspace/aliengo_competition/ros2_isaac_bridge/run_bridge_node.sh
 Во втором терминале (ещё один `docker/ctl.sh ros2-exec`):
 
 ```bash
-bash /workspace/aliengo_competition/ros2_isaac_bridge/run_rviz.sh
+rqt_graph
 ```
 
 ## Полезные команды в ROS 2 контейнере
