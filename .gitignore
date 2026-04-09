@@ -7,9 +7,13 @@ logs/
 tmp/
 models/*
 !models/.gitkeep
+<<<<<<< Updated upstream
 *.pt
 *.pth
 *.jit
 runs/
 README.md
 .codex
+=======
+README.md
+>>>>>>> Stashed changes
