@@ -1,5 +1,4 @@
-# flat_terrain_only.py
-
+import csv
 import numpy as np
 import matplotlib.pyplot as plt
 from isaacgym import terrain_utils
@@ -273,6 +272,134 @@ def generate_binary_map(height_field):
     binary_map = (height_field > 0).astype(np.uint8)
     return binary_map
 
+def generate_detectable_object_positions(
+    height_field,
+    horizontal_scale,
+    seed=0,
+    num_boxes=5,
+    obstacle_clearance_m=1.0,
+    object_spacing_m=3.0,
+):
+    rng = np.random.default_rng(seed)
+
+    obstacle_clearance_cells = int(np.ceil(obstacle_clearance_m / horizontal_scale))
+    object_spacing_cells = int(np.ceil(object_spacing_m / horizontal_scale))
+
+    obstacle_cells = np.argwhere(height_field != 0)
+    placed_cells = []
+
+    max_tries = 20000
+    n_rows, n_cols = height_field.shape
+
+    for _ in range(max_tries):
+        if len(placed_cells) == num_boxes:
+            break
+
+        x_cell = int(rng.integers(0, n_rows))
+        y_cell = int(rng.integers(0, n_cols))
+
+        if height_field[x_cell, y_cell] == 1:
+            continue
+
+        valid = True
+
+        if len(obstacle_cells) > 0:
+            dx = obstacle_cells[:, 0] - x_cell
+            dy = obstacle_cells[:, 1] - y_cell
+            dist2 = dx * dx + dy * dy
+            if np.any(dist2 < obstacle_clearance_cells * obstacle_clearance_cells):
+                valid = False
+
+        if not valid:
+            continue
+
+        for px, py in placed_cells:
+            if (x_cell - px) ** 2 + (y_cell - py) ** 2 < object_spacing_cells * object_spacing_cells:
+                valid = False
+                break
+
+        if not valid:
+            continue
+
+        placed_cells.append((x_cell, y_cell))
+
+    if len(placed_cells) < num_boxes:
+        raise RuntimeError(
+            f"Could not place {num_boxes} objects with the requested clearances. "
+            f"Placed only {len(placed_cells)}."
+        )
+
+    return [
+        {"id": i, "cell_x": int(x), "cell_y": int(y)}
+        for i, (x, y) in enumerate(placed_cells)
+    ]
+
+
+def read_robot_log_positions(log_path, horizontal_scale):
+    positions_px = []
+
+    with open(log_path, "r") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            x_world = float(row["x"])
+            y_world = float(row["y"])
+
+            x_px = int(round(x_world / horizontal_scale))
+            y_px = int(round(y_world / horizontal_scale))
+
+            positions_px.append((x_px, y_px))
+
+    return positions_px
+
+
+def generate_rgb_map(height_field, object_positions=None, robot_positions=None, horizontal_scale=0.1):
+    # 1 = obstacle, 0 = free space
+    binary_map = (height_field > 0).astype(np.uint8)
+
+    rgb_map = np.zeros((binary_map.shape[0], binary_map.shape[1], 3), dtype=np.uint8)
+    rgb_map[binary_map == 1] = [255, 255, 255]
+
+    # draw red circle edges around detectable objects
+    if object_positions is not None:
+        radius_m = 1.5
+        radius_px = int(radius_m / horizontal_scale)
+
+        obj_size_m = 0.5
+        obj_half_px = int((obj_size_m / horizontal_scale) / 2)
+
+        for obj in object_positions:
+            cx = int(obj["cell_x"])
+            cy = int(obj["cell_y"])
+
+            for x in range(cx - obj_half_px, cx + obj_half_px + 1):
+                for y in range(cy - obj_half_px, cy + obj_half_px + 1):
+                    if 0 <= x < rgb_map.shape[0] and 0 <= y < rgb_map.shape[1]:
+                        rgb_map[x, y] = [0, 0, 255]  # BLUE object
+
+        for obj in object_positions:
+            cx = int(obj["cell_x"])
+            cy = int(obj["cell_y"])
+
+            for x in range(cx - radius_px, cx + radius_px + 1):
+                for y in range(cy - radius_px, cy + radius_px + 1):
+                    if 0 <= x < rgb_map.shape[0] and 0 <= y < rgb_map.shape[1]:
+                        dist2 = (x - cx) ** 2 + (y - cy) ** 2
+                        if radius_px**2 - radius_px <= dist2 <= radius_px**2 + radius_px:
+                            rgb_map[x, y] = [255, 0, 0]  # red edge
+
+    # draw robot trajectory as green dots
+    if robot_positions is not None:
+        dot_radius = 1
+
+        for cx, cy in robot_positions:
+            for x in range(cx - dot_radius, cx + dot_radius + 1):
+                for y in range(cy - dot_radius, cy + dot_radius + 1):
+                    if 0 <= x < rgb_map.shape[0] and 0 <= y < rgb_map.shape[1]:
+                        if (x - cx) ** 2 + (y - cy) ** 2 <= dot_radius ** 2:
+                            rgb_map[x, y] = [0, 255, 0]  # green dot
+
+    return rgb_map
+
 
 if __name__ == "__main__":
     terrain = Terrain()
@@ -284,4 +411,38 @@ if __name__ == "__main__":
     # visualize
     plt.imshow(binary_map, cmap="gray")
     plt.title("Binary Occupancy Map")
+    plt.show()
+
+    seed = 0
+    log_path = "robot_log.csv"
+
+    object_positions = generate_detectable_object_positions(
+        height_field=height_field,
+        horizontal_scale=terrain.horizontal_scale,
+        seed=seed,
+        num_boxes=5,
+        obstacle_clearance_m=1.0,
+        object_spacing_m=3.0,
+    )
+
+    print("[Detectable object positions]")
+    for obj in object_positions:
+        print(f"object {obj['id']}: cell=({obj['cell_x']}, {obj['cell_y']})")
+
+    robot_positions = read_robot_log_positions(
+        log_path=log_path,
+        horizontal_scale=terrain.horizontal_scale
+    )
+
+    print(f"[Robot trajectory] loaded {len(robot_positions)} positions from {log_path}")
+
+    rgb_map = generate_rgb_map(
+        height_field,
+        object_positions=object_positions,
+        robot_positions=robot_positions,
+        horizontal_scale=terrain.horizontal_scale
+    )
+
+    plt.imshow(rgb_map)
+    plt.title("Occupancy Map")
     plt.show()
