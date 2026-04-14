@@ -7,6 +7,7 @@ import cv2
 
 import glob
 import pickle as pkl
+from pathlib import Path
 
 from aliengo_gym.envs import *
 from aliengo_gym.envs.base.legged_robot_config import Cfg
@@ -16,6 +17,9 @@ from aliengo_gym.envs.aliengo.velocity_tracking import VelocityTrackingEasyEnv
 from tqdm import tqdm
 from datetime import datetime
 import os
+
+DEFAULT_RUN_LABEL = "gait-conditioned-agility/aliengo-v0/train"
+RUNS_DIR = Path(__file__).resolve().parents[1] / "runs"
 
 
 def load_policy(logdir):
@@ -34,7 +38,7 @@ def load_policy(logdir):
 
 
 def load_env(label, headless=False, seed=0):
-    dirs = glob.glob(f"../runs/{label}/*")
+    dirs = glob.glob(str(RUNS_DIR / label / "*"))
     logdir = sorted(dirs)[0]
 
     with open(logdir + "/parameters.pkl", 'rb') as file:
@@ -113,7 +117,7 @@ def play_aliengo(headless=True):
     import glob
     import os
 
-    label = "gait-conditioned-agility/aliengo-v0/train"
+    label = DEFAULT_RUN_LABEL
     seed = 0
 
     env, policy = load_env(label, headless=headless, seed=seed)

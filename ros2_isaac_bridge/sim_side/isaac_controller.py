@@ -4,6 +4,8 @@ assert isaacgym
 import glob
 import pickle as pkl
 import time
+from pathlib import Path
+
 import torch
 
 from sim_bridge_client import SimBridgeClient
@@ -11,6 +13,9 @@ from sim_bridge_client import SimBridgeClient
 from aliengo_gym.envs import *
 from aliengo_gym.envs.base.legged_robot_config import Cfg
 from aliengo_gym.envs.aliengo.velocity_tracking import VelocityTrackingEasyEnv
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+RUNS_DIR = REPO_ROOT / "runs"
 
 
 def load_policy(logdir):
@@ -27,7 +32,12 @@ def load_policy(logdir):
 
 
 def load_env(label, headless=False, seed=0):
-    dirs = glob.glob(f"../../runs/{label}/*")
+    dirs = glob.glob(str(RUNS_DIR / label / "*"))
+    if not dirs:
+        raise FileNotFoundError(
+            f"No runs found for label '{label}' under {RUNS_DIR}. "
+            "Check that the trained run exists and that the label matches the run directory."
+        )
     logdir = sorted(dirs)[0]
 
     with open(logdir + "/parameters.pkl", "rb") as file:

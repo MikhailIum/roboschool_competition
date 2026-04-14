@@ -102,34 +102,6 @@ def update_cfg_from_args(env_cfg, cfg_train, args):
     return env_cfg, cfg_train
 
 
-def get_args():
-    custom_parameters = [
-        {"name": "--task", "type": str, "default": "aliengo_flat", "help": "Task name."},
-        {"name": "--mode", "type": str, "default": "sim", "choices": ["sim"], "help": "Backend mode."},
-        {"name": "--vx", "type": float, "default": 0.0, "help": "Target forward speed."},
-        {"name": "--vy", "type": float, "default": 0.0, "help": "Target lateral speed."},
-        {"name": "--vw", "type": float, "default": 0.0, "help": "Target yaw rate."},
-        {"name": "--steps", "type": int, "default": 1000, "help": "Steps for play/controller demos."},
-        {"name": "--render_camera", "action": "store_true", "default": False, "help": "Render front RGB+Depth camera stream (Intel RealSense D435 emulation)."},
-        {"name": "--resume", "action": "store_true", "default": False, "help": "Resume training from a checkpoint."},
-        {"name": "--experiment_name", "type": str, "help": "Experiment name override."},
-        {"name": "--run_name", "type": str, "help": "Run name override."},
-        {"name": "--checkpoint", "type": int, "help": "Checkpoint number to load."},
-        {"name": "--headless", "action": "store_true", "default": False, "help": "Disable viewer rendering."},
-        {"name": "--horovod", "action": "store_true", "default": False, "help": "Use horovod."},
-        {"name": "--rl_device", "type": str, "default": "cuda:0", "help": "RL device."},
-        {"name": "--num_envs", "type": int, "help": "Number of environments."},
-        {"name": "--seed", "type": int, "help": "Random seed."},
-        {"name": "--max_iterations", "type": int, "help": "Max training iterations."},
-    ]
-    args = gymutil.parse_arguments(description="AlienGo competition", custom_parameters=custom_parameters)
-    args.sim_device_id = args.compute_device_id
-    args.sim_device = args.sim_device_type
-    if args.sim_device == "cuda":
-        args.sim_device += f":{args.sim_device_id}"
-    return args
-
-
 def export_policy_as_jit(actor_critic, path: str) -> None:
     os.makedirs(path, exist_ok=True)
     model = copy.deepcopy(actor_critic.actor).to("cpu")

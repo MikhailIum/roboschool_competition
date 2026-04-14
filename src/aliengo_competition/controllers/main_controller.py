@@ -98,7 +98,7 @@ class _CameraRenderer:
 def run(
     robot: AliengoRobotInterface,
     steps: int = 15000,
-    render_camera: bool = False,
+    render_camera: bool = True,
     camera_depth_max_m: float = 4.0,
     seed: int = 0,
 ) -> None:
@@ -117,6 +117,10 @@ def run(
     print(
         f"[Controller] dt={control_dt:.4f}s, requested_steps={requested_steps}, "
         f"effective_steps={total_steps}"
+    )
+    print(
+        f"[Controller] camera_rendering={'enabled' if camera_renderer.enabled else 'disabled'} "
+        f"(depth_max_m={camera_depth_max_m:.1f})"
     )
 
     # User-editable blocks in this file:
@@ -150,6 +154,11 @@ def run(
             f" observation_type={type(initial_observation).__name__},"
             f" camera_payload={'yes' if initial_camera_payload is not None else 'no'}"
         )
+        if initial_camera_payload is None:
+            print(
+                "[Controller] Warning: front camera payload is unavailable. "
+                "Check that the simulator is not running headless and that front_camera_enabled is set."
+            )
 
         for step_index in range(total_steps):
             state = robot.get_state()
