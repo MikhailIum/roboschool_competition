@@ -37,7 +37,7 @@ class LeggedRobot(BaseTask):
         self.eval_cfg = eval_cfg
         self.sim_params = sim_params
         self.height_samples = None
-        self.debug_viz = False
+        self.debug_viz = True
         self.init_done = False
         self.initial_dynamics_dict = initial_dynamics_dict
         self.seed = int(seed)
@@ -1715,6 +1715,35 @@ class LeggedRobot(BaseTask):
             object_spacing_m=3.0,
         )
 
+        self.detectable_object_positions = [
+            {
+                "id": k,
+                "x": float(x_boxes[k]),
+                "y": float(y_boxes[k]),
+                "z": 0.25,
+                "cell_x": int(placed_cells[k][0]),
+                "cell_y": int(placed_cells[k][1]),
+            }
+            for k in range(num_boxes)
+        ]
+
+        # object id → name mapping
+        self.object_id_to_name = {
+            0: "backpack",
+            1: "bottle",
+            2: "chair",
+            3: "cup",
+            4: "laptop",
+        }
+
+        rng = np.random.default_rng(self.seed)
+        ids = list(self.object_id_to_name.keys())
+        rng.shuffle(ids)
+
+        self.SEQUENCE_OF_OBJECTS = [(i, self.object_id_to_name[i]) for i in ids]
+
+        print(f"[Sequence] {self.SEQUENCE_OF_OBJECTS}")
+
         print(f"[Object placement] seed={self.seed}")
         for k in range(num_boxes):
             print(
@@ -2009,26 +2038,49 @@ class LeggedRobot(BaseTask):
             cfg.domain_rand.gravity_rand_interval * cfg.domain_rand.gravity_impulse_duration)
 
     def _draw_debug_vis(self):
-        """ Draws visualizations for dubugging (slows down simulation a lot).
-            Default behaviour: draws height measurement points
-        """
-        # draw height lines
-        if not self.terrain.cfg.measure_heights:
-            return
         self.gym.clear_lines(self.viewer)
         self.gym.refresh_rigid_body_state_tensor(self.sim)
-        sphere_geom = gymutil.WireframeSphereGeometry(0.02, 4, 4, None, color=(1, 1, 0))
-        for i in range(self.num_envs):
-            base_pos = (self.root_states[i, :3]).cpu().numpy()
-            heights = self.measured_heights[i].cpu().numpy()
-            height_points = quat_apply_yaw(self.base_quat[i].repeat(heights.shape[0]),
-                                           self.height_points[i]).cpu().numpy()
-            for j in range(heights.shape[0]):
-                x = height_points[j, 0] + base_pos[0]
-                y = height_points[j, 1] + base_pos[1]
-                z = heights[j]
-                sphere_pose = gymapi.Transform(gymapi.Vec3(x, y, z), r=None)
-                gymutil.draw_lines(sphere_geom, self.gym, self.viewer, self.envs[i], sphere_pose)
+
+        if hasattr(self.terrain.cfg, "measure_heights") and self.terrain.cfg.measure_heights:
+            yellow_sphere = gymutil.WireframeSphereGeometry(0.02, 4, 4, None, color=(1, 1, 0))
+            for i in range(self.num_envs):
+                base_pos = (self.root_states[i, :3]).cpu().numpy()
+                heights = self.measured_heights[i].cpu().numpy()
+                height_points = quat_apply_yaw(
+                    self.base_quat[i].repeat(heights.shape[0]),
+                    self.height_points[i]
+                ).cpu().numpy()
+
+                for j in range(heights.shape[0]):
+                    x = height_points[j, 0] + base_pos[0]
+                    y = height_points[j, 1] + base_pos[1]
+                    z = heights[j]
+                    sphere_pose = gymapi.Transform(gymapi.Vec3(x, y, z), r=None)
+                    gymutil.draw_lines(yellow_sphere, self.gym, self.viewer, self.envs[i], sphere_pose)
+
+        if not hasattr(self, "detectable_object_positions"):
+            return
+
+        radius_m = 1.5
+        num_circle_points = 72
+        point_radius = 0.01
+        z_draw = 0.03
+
+        red_sphere = gymutil.WireframeSphereGeometry(point_radius, 4, 4, None, color=(1, 0, 0))
+
+        for env_id in range(self.num_envs):
+            for obj in self.detectable_object_positions:
+                cx = obj["x"]
+                cy = obj["y"]
+
+                for k in range(num_circle_points):
+                    theta = 2.0 * np.pi * k / num_circle_points
+                    px = cx + radius_m * np.cos(theta)
+                    py = cy + radius_m * np.sin(theta)
+                    pz = z_draw
+
+                    sphere_pose = gymapi.Transform(gymapi.Vec3(px, py, pz), r=None)
+                    gymutil.draw_lines(red_sphere, self.gym, self.viewer, self.envs[env_id], sphere_pose)
 
     def _init_height_points(self, env_ids, cfg):
         """ Returns points at which the height measurments are sampled (in base frame)
