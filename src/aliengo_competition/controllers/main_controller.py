@@ -40,7 +40,7 @@ class _CameraRenderer:
         try:
             import cv2
         except Exception as exc:
-            print(f"Camera rendering disabled: failed to import cv2 ({exc})")
+            print(f"Отрисовка камеры отключена: не удалось импортировать cv2 ({exc})")
             self.enabled = False
             return
         self._cv2 = cv2
@@ -98,14 +98,14 @@ class _CameraRenderer:
 def run(
     robot: AliengoRobotInterface,
     steps: int = 15000,
-    render_camera: bool = True,
+    render_camera: bool = False,
     camera_depth_max_m: float = 4.0,
     seed: int = 0,
 ) -> None:
     robot.reset()
     env = getattr(robot, "env", None)
     if env is None:
-        raise ValueError("Robot interface must expose 'env' for mandatory logging.")
+        raise ValueError("Интерфейс робота должен предоставлять 'env' для обязательного логирования.")
 
     logger = CompetitionRunLogger(env=env, seed=int(seed))
     camera_renderer = _CameraRenderer(enabled=render_camera, depth_max_m=camera_depth_max_m)
@@ -115,21 +115,20 @@ def run(
     target_duration_s = requested_steps * nominal_dt
     total_steps = max(int(round(target_duration_s / control_dt)), 1)
     print(
-        f"[Controller] dt={control_dt:.4f}s, requested_steps={requested_steps}, "
+        f"[Контроллер] dt={control_dt:.4f}с, requested_steps={requested_steps}, "
         f"effective_steps={total_steps}"
     )
-    print(
-        f"[Controller] camera_rendering={'enabled' if camera_renderer.enabled else 'disabled'} "
-        f"(depth_max_m={camera_depth_max_m:.1f})"
-    )
+    object_queue = list(getattr(env, "SEQUENCE_OF_OBJECTS", []))
+    print(f"[Контроллер] отрисовка_камеры={'включена' if camera_renderer.enabled else 'выключена'}")
+    print(f"[Контроллер] object_queue={object_queue}")
 
-    # User-editable blocks in this file:
+    # Редактируемые пользователем блоки в этом файле:
     # 1. USER PARAMETERS START / END
     # 2. USER CONTROL LOGIC START / END
 
     # ================= USER PARAMETERS START =================
-    # Tune these values to change the demo behavior. Time-based settings are
-    # converted with env.dt, so behavior is stable when sim step changes.
+    # Настраивайте эти значения, чтобы менять поведение демо.
+    # Параметры, завязанные на время, пересчитываются через шаг симуляции, потому время в секундах работают в симуляции правильно
     warmup_s = 0.4
     ramp_s = 1.2
     trajectory_period_s = 8.0
@@ -144,26 +143,23 @@ def run(
     segment_start_t = 0.0
 
     try:
-        # Example of API usage outside control loop:
-        # - robot.get_observation() returns latest observation tensor/object.
-        # - robot.get_camera() accesses the raw camera payload if available.
         initial_observation = robot.get_observation()
         initial_camera_payload = robot.get_camera()
         print(
-            "[Controller] API preview:"
+            "[Контроллер] Предпросмотр API:"
             f" observation_type={type(initial_observation).__name__},"
-            f" camera_payload={'yes' if initial_camera_payload is not None else 'no'}"
+            f" camera_payload={'да' if initial_camera_payload is not None else 'нет'}"
         )
         if initial_camera_payload is None:
             print(
-                "[Controller] Warning: front camera payload is unavailable. "
-                "Check that the simulator is not running headless and that front_camera_enabled is set."
+                "[Контроллер] Предупреждение: данные фронтальной камеры недоступны. "
+                "Проверьте, что симулятор не запущен в headless-режиме и что включён front_camera_enabled."
             )
 
         for step_index in range(total_steps):
             state = robot.get_state()
 
-            # Example: camera via state and direct method are both supported.
+            # Камеру можно брать и из state, и напрямую через robot.get_camera().
             camera_payload = robot.get_camera()
             camera_state = state.camera
             if (camera_state.rgb is None or camera_state.depth is None) and isinstance(camera_payload, dict):
@@ -171,29 +167,77 @@ def run(
                     rgb=camera_payload.get("image"),
                     depth=camera_payload.get("depth"),
                 )
+            elif (camera_state.rgb is None or camera_state.depth is None) and isinstance(camera_payload, CameraState):
+                camera_state = camera_payload
             camera_renderer.show(camera_state)
             omega_z = state.imu.wz / ang_vel_scale
 
             # ================= USER CONTROL LOGIC START =================
-            # This block is the intended place for participant logic.
-            # Measurement names:
-            # - JointState: state.joints.name / state.joints.position / state.joints.velocity
-            #   (aliases: state.q, state.q_dot)
-            # - IMU angular velocity: state.imu.wx / state.imu.wy / state.imu.wz
-            # - Base velocity: state.vx / state.vy / state.wz
-            #   (full vectors: state.base_linear_velocity_xyz, state.base_angular_velocity_xyz)
-            # - Camera: state.camera.image (rgb), state.camera.depth
-            # Control output:
-            # - set desired command vx, vy, vw
+            # Это основной блок для логики участника.
+            # Здесь нужно читать измерения, принимать решение и формировать
+            # команды движения. Логирование найденного объекта тоже делается
+            # отсюда.
             #
-            # Example below:
-            # - smooth warmup
-            # - continuous figure-eight in velocity space
-            # - yaw-rate command combines feed-forward turn and damping
+            # Формат данных эквивалентен данных:
+            # - вход команды: vx, vy, wz
+            # - выход состояния: measured_vx, measured_vy, measured_wz
+            # - joint_states: joint_names, relative_dof_pos, dof_vel
+            # - imu: base_ang_vel, base_lin_acc
+            # - camera: camera_data["image"], camera_data["depth"]
+            # - порядок объектов: object_queue
+            #
+            # Ниже приведён обязательный шаблон. Участник должен:
+            # 1. реализовать get_found_object_id(...)
+            # 2. при обнаружении объекта вернуть его id
+            # 3. обязательно вызвать log_found_object(...)
+            #
+            # Если объект не найден, верните None.
             sim_t = state.sim_time_s
 
-            def mark_detected_object(object_id: int) -> None:
+            joint_names = state.joints.name
+            relative_dof_pos = state.q
+            dof_vel = state.q_dot
+            measured_vx = state.vx
+            measured_vy = state.vy
+            measured_wz = state.wz
+            base_ang_vel = state.imu.angular_velocity_xyz
+            base_lin_acc = np.zeros(3, dtype=np.float32)
+            camera_data = camera_payload if isinstance(camera_payload, dict) else {
+                "image": camera_state.rgb,
+                "depth": camera_state.depth,
+            }
+
+            # Обязательная обвязка для логирования найденного объекта.
+            # Использование:
+            # - get_found_object_id(...) должен вернуть id найденного объекта
+            #   или None, если объект не найден
+            # - log_found_object(...) записывает событие в судейский лог
+            # - этот шаблон нельзя удалять: участник обязан реализовать его
+            #   в своём решении
+            #
+            # Пример:
+            #     detected_object_id = get_found_object_id(...)
+            #     if detected_object_id is not None:
+            #         log_found_object(detected_object_id)
+            def log_found_object(object_id: int) -> None:
+                """ОБЯЗАТЕЛЬНО: вызывайте при обнаружении целевого объекта."""
                 logger.log_detected_object_at_time(int(object_id), float(sim_t))
+
+            def get_found_object_id(
+                current_state,
+                current_camera_data,
+                current_object_queue,
+            ):
+                """ОБЯЗАТЕЛЬНО: замените заглушку своей логикой и возвращайте id объекта или None."""
+                return None
+
+            detected_object_id = get_found_object_id(
+                state,
+                camera_data,
+                object_queue,
+            )
+            if detected_object_id is not None:
+                log_found_object(detected_object_id)
 
             local_t = max(sim_t - segment_start_t, 0.0)
             if local_t < warmup_s:
@@ -208,24 +252,20 @@ def run(
                 vx = ramp * (forward_speed_mean + forward_speed_amp * math.cos(phase))
                 vy = ramp * (lateral_speed_amp * math.sin(2.0 * phase))
                 yaw_ff = yaw_rate_amp * math.sin(phase + math.pi / 4.0)
-                vw = ramp * (yaw_ff - yaw_rate_damping * omega_z)
+                vw = ramp * (yaw_ff - yaw_rate_damping * state.imu.wz / ang_vel_scale)
                 vw = max(min(vw, 1.0), -1.0)
             # ================== USER CONTROL LOGIC END ==================
-            # Optional object-detection logging hook:
-            # Set detected_object_id to an integer object ID when your
-            # detection condition triggers on this step.
-            detected_object_id = None
-            if detected_object_id is not None:
-                mark_detected_object(detected_object_id)
 
             robot.set_speed(vx, vy, vw)
             robot.step()
-            logger.log_step((step_index + 1) * control_dt)
-            robot.get_observation()  # Example of observation access after step().
+            logger.log_step(step_index * control_dt)
+            robot.get_observation()  # Пример доступа к наблюдению после step().
+
             if robot.is_fallen():
                 robot.stop()
                 robot.reset()
                 segment_start_t = (step_index + 1) * control_dt
+                print("[Контроллер] робот упал -> сброс")
                 continue
     finally:
         logger.close()
