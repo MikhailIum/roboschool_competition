@@ -1,5 +1,15 @@
 # Aliengo Competition
 
+Команда №5. Использовали ROS.
+
+Необходимо дополнительно запустить следующие команды в докере:
+```bash
+apt update && apt install -y python3-pip
+pip3 install onnxruntime-gpu
+pip3 install onnxruntime
+
+```
+
 Репозиторий для соревнования по управлению Aliengo в Isaac Gym.
 
 Проект поддерживает три рабочих сценария:
