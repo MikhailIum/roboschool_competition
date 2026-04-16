@@ -38,6 +38,7 @@ class HLInterfaceController(Node):
         self.width = 848
         self.height = 480
         self.fov_h_deg = 86.0
+        self.SKIPPING_FRAMES = 0
 
         fov_h = math.radians(self.fov_h_deg)
         self.fx = (self.width / 2.0) / math.tan(fov_h / 2.0)
@@ -218,12 +219,31 @@ class HLInterfaceController(Node):
     # =====================================================================
     # Example competitor entry point
     # =====================================================================
+
+  
+
+
     def run_user_code(self) -> None:
+        # if self.target_pose_3d is not None:
+        #     X, Y, Z = self.target_pose_3d
+        #     self.follow_point(X, Y, Z)
+
+        #     self.target_pose_3d = None 
+        
         if self.target_pose_3d is not None:
             X, Y, Z = self.target_pose_3d
             self.follow_point(X, Y, Z)
-
+            self.SKIPPING_FRAMES = 0
+            if Z <= 0.2:
+                print('wow')
+                # self.detected_callback()
             self.target_pose_3d = None 
+            print("aaa")
+
+        else:
+            self.SKIPPING_FRAMES +=1
+            if self.SKIPPING_FRAMES > 60:
+                self.send_command(0.0, 0.0, 0.5)
         
 
     # =====================================================================
@@ -328,7 +348,7 @@ class HLInterfaceController(Node):
         return [x, y, z]
     
     def follow_point(self, x: float, y: float, z: float):
-        kp_yaw = 0.8  
+        kp_yaw = 2 
         kp_dist = 0.5 
         
         stop_distance = 1.0 
