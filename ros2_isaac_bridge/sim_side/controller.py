@@ -10,6 +10,8 @@ from rclpy.node import Node
 from geometry_msgs.msg import Twist, TwistStamped
 from sensor_msgs.msg import Image, Imu, JointState
 
+import onnxruntime as ort
+import cv2
 
 class HLInterfaceController(Node):
     """
@@ -24,6 +26,25 @@ class HLInterfaceController(Node):
 
     def __init__(self):
         super().__init__("controller")
+
+        model_path = "../../weights/detector_small.onnx" 
+        self.ort_session = ort.InferenceSession(model_path, providers=['CUDAExecutionProvider'])
+        self.input_name = self.ort_session.get_inputs()[0].name
+        
+        self.annotated_rgb: Optional[np.ndarray] = None
+
+        self.model_input_size = 640 
+        self.conf_threshold = 0.4   
+        self.width = 848
+        self.height = 480
+        self.fov_h_deg = 86.0
+
+        fov_h = math.radians(self.fov_h_deg)
+        self.fx = (self.width / 2.0) / math.tan(fov_h / 2.0)
+        self.fy = self.fx
+        self.cx = self.width / 2.0
+        self.cy = self.height / 2.0
+        self.target_pose_3d: Optional[List[float]] = None
 
         # ---------------- ROS I/O ----------------
         self.cmd_pub = self.create_publisher(Twist, "/cmd_vel", 10)
@@ -198,26 +219,12 @@ class HLInterfaceController(Node):
     # Example competitor entry point
     # =====================================================================
     def run_user_code(self) -> None:
-        """
-        Competitors can replace the contents of this method with their own logic.
-        """
-        now = self._now_sec()
+        if self.target_pose_3d is not None:
+            X, Y, Z = self.target_pose_3d
+            self.follow_point(X, Y, Z)
 
-        if now - self.last_command_change_time >= self.command_duration:
-            self.last_command_change_time = now
-            self.current_demo_cmd = self._sample_random_command()
-            self.get_logger().info(
-                "New random command: "
-                f"vx={self.current_demo_cmd['vx']:.3f}, "
-                f"vy={self.current_demo_cmd['vy']:.3f}, "
-                f"wz={self.current_demo_cmd['wz']:.3f}"
-            )
-
-        self.send_command(
-            self.current_demo_cmd["vx"],
-            self.current_demo_cmd["vy"],
-            self.current_demo_cmd["wz"],
-        )
+            self.target_pose_3d = None 
+        
 
     # =====================================================================
     # Internal callbacks
@@ -248,20 +255,112 @@ class HLInterfaceController(Node):
             "stamp_sec": self._msg_time_to_sec(msg.header.stamp),
         }
 
+
     def _rgb_callback(self, msg: Image) -> None:
-        try:
-            image = np.frombuffer(msg.data, dtype=np.uint8).reshape((msg.height, msg.width, 3))
-        except ValueError:
-            self.get_logger().warning("Failed to reshape RGB image.")
+        if msg.data is None:
             return
 
-        self.latest_rgb = image.copy()
-        self.latest_rgb_info = {
-            "height": int(msg.height),
-            "width": int(msg.width),
-            "encoding": msg.encoding,
-            "stamp_sec": self._msg_time_to_sec(msg.header.stamp),
-        }
+        frame = np.frombuffer(msg.data, dtype=np.uint8).reshape((msg.height, msg.width, 3))
+        display_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
+        orig_h, orig_w = frame.shape[:2]
+        
+        input_img = cv2.resize(display_frame, (self.model_input_size, self.model_input_size))
+        input_img = input_img.transpose(2, 0, 1) 
+        input_img = np.ascontiguousarray(input_img).astype(np.float32) / 255.0
+        input_img = input_img[None, ...]  
+
+        outputs = self.ort_session.run(None, {self.input_name: input_img})
+        
+        predictions = outputs[0][0] 
+
+        for pred in predictions:
+            score = pred[4]
+            if score < self.conf_threshold:
+                continue
+                
+
+            x1, y1, x2, y2 = pred[:4]
+            
+            x1 = int(x1 * orig_w / self.model_input_size)
+            y1 = int(y1 * orig_h / self.model_input_size)
+            x2 = int(x2 * orig_w / self.model_input_size)
+            y2 = int(y2 * orig_h / self.model_input_size)
+
+            u_center = int((x1 + x2) / 2)
+            v_center = int((y1 + y2) / 2)
+
+            u_center = np.clip(u_center, 0, orig_w - 1)
+            v_center = np.clip(v_center, 0, orig_h - 1)
+
+            pose_3d = self.get_3d_pose(u_center, v_center)
+
+            if pose_3d:
+                self.target_pose_3d = pose_3d
+                X, Y, Z = pose_3d
+                label = f"ID:{int(pred[5])} Pose: [{X:.2f}, {Y:.2f}, {Z:.2f}]m"
+                cv2.circle(display_frame, (u_center, v_center), 5, (255, 0, 0), -1)
+                cv2.putText(display_frame, label, (x1, y1 - 10), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            
+
+        self.latest_rgb = frame
+        self.annotated_rgb = display_frame
+        
+        cv2.imshow("YOLO26 Detection", display_frame)
+        cv2.waitKey(1)
+
+    def get_3d_pose(self, u: int, v: int) -> Optional[List[float]]:
+        if self.latest_depth is None:
+            return None
+        
+        z = self.latest_depth[v, u]
+        
+        if z <= 0 or np.isnan(z):
+            return None
+        
+        if not np.isfinite(z):
+            return None
+
+        x = (u - self.cx) * z / self.fx
+        y = (v - self.cy) * z / self.fy
+        
+        return [x, y, z]
+    
+    def follow_point(self, x: float, y: float, z: float):
+        kp_yaw = 0.8  
+        kp_dist = 0.5 
+        
+        stop_distance = 1.0 
+        
+        target_wz = -kp_yaw * x 
+        
+        distance_error = z - stop_distance
+        target_vx = kp_dist * distance_error
+
+        
+        target_vx = np.clip(target_vx, -1.4, 1.6)
+        target_wz = np.clip(target_wz, -1.6, 1.6)
+        
+        if distance_error < 0: target_vx = 0.0
+
+        self.send_command(target_vx, 0.0, target_wz)
+
+    def detect_and_draw(self, frame, model_outputs):
+        detections = model_outputs[0] 
+
+        for det in detections[0]: 
+            x1, y1, x2, y2, conf, cls = det[:6]
+            
+            if conf > 0.5: 
+                h, w, _ = frame.shape
+                
+                start_point = (int(x1), int(y1))
+                end_point = (int(x2), int(y2))
+                
+                cv2.rectangle(frame, start_point, end_point, (0, 255, 0), 2)
+                cv2.putText(frame, f"Class {int(cls)} {conf:.2f}", 
+                            (int(x1), int(y1)-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
     def _depth_callback(self, msg: Image) -> None:
         try:

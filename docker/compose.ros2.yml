@@ -19,6 +19,15 @@ services:
     stdin_open: true
     tty: true
     network_mode: host
-    gpus: all
+    # gpus: all
 
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    
     command: tail -f /dev/null
+
